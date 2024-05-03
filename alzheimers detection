@@ -1,0 +1,299 @@
+#cognitive data
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from keras.models import Sequential
+from keras.layers import Dense, Dropout
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+from keras.optimizers import Adam
+
+# Load the dataset from CSV file
+data = pd.read_csv("/content/drive/MyDrive/data.csv")
+
+# Apply label encoding to the "class" column
+label_encoder = LabelEncoder()
+data["class"] = label_encoder.fit_transform(data["class"])
+
+# Split the dataset into features (X) and target (y)
+X = data.drop(columns=["ID", "class"])  # Assuming "ID" and "class" are the columns for ID and target respectively
+y = data["class"]
+
+# Perform additional preprocessing steps such as scaling numerical features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Split the dataset into train and test sets
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+# Define the neural network model
+model = Sequential([
+    Dense(256, activation='relu', input_shape=(X_train.shape[1],)),
+    Dropout(0.5),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(64, activation='relu'),
+    Dropout(0.5),
+    Dense(32, activation='relu'),
+    Dropout(0.5),
+    Dense(1, activation='sigmoid')
+])
+
+# Compile the model
+model.compile(optimizer=Adam(lr=0.0001), loss='binary_crossentropy', metrics=['accuracy'])
+
+# Display the model summary
+model.summary()
+
+# Define callbacks for early stopping and model checkpoint
+early_stopping_cb = EarlyStopping(patience=5, restore_best_weights=True)
+checkpoint_cb = ModelCheckpoint("alzheimer_model.h5", save_best_only=True)
+
+# Train the model
+history = model.fit(X_train, y_train, epochs=100, batch_size=32, validation_split=0.2, callbacks=[early_stopping_cb, checkpoint_cb])
+
+# Evaluate the model on the test set
+test_loss, test_accuracy = model.evaluate(X_test, y_test)
+print("Test Loss:", test_loss)
+print("Test Accuracy:", test_accuracy)
+
+
+
+#mri network
+
+import os
+import cv2
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from imblearn.over_sampling import SMOTE
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+import tensorflow as tf
+from keras.utils import to_categorical
+
+# Load images and labels
+images = []
+labels = []
+for subfolder in os.listdir('/content/drive/MyDrive/az2'):
+    subfolder_path = os.path.join('/content/drive/MyDrive/az2', subfolder)
+    for folder in os.listdir(subfolder_path):
+        subfolder_path2 = os.path.join(subfolder_path, folder)
+        for image_filename in os.listdir(subfolder_path2):
+            image_path = os.path.join(subfolder_path2, image_filename)
+            images.append(image_path)
+            labels.append(folder)
+
+# Create DataFrame
+df = pd.DataFrame({'image': images, 'label': labels})
+
+# Visualize class distribution
+plt.figure(figsize=(5, 5))
+class_counts = df['label'].value_counts()
+labels = class_counts.index
+sizes = class_counts.values
+
+plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=sns.color_palette('Set1'))
+plt.title('Distribution of Classes', fontsize=20)
+plt.show()
+
+# Display sample images
+plt.figure(figsize=(50, 50))
+for n, i in enumerate(np.random.randint(0, len(df), 20)):
+    plt.subplot(10, 5, n+1)
+    img = cv2.imread(df.image[i])
+    img = cv2.resize(img, (224, 224))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    plt.imshow(img)
+    plt.axis('off')
+    plt.title(df.label[i], fontsize=25)
+
+# Define image data generator
+Size = (176, 176)
+work_dr = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1./255)
+train_data_gen = work_dr.flow_from_dataframe(df, x_col='image', y_col='label', target_size=Size, batch_size=6500, shuffle=False)
+
+# Generate train data and apply SMOTE for class imbalance
+train_data, train_labels = train_data_gen.next()
+sm = SMOTE(random_state=42)
+train_data, train_labels = sm.fit_resample(train_data.reshape(-1, 176 * 176 * 3), train_labels)
+train_data = train_data.reshape(-1, 176, 176, 3)
+
+# Convert train_labels to categorical
+train_labels = to_categorical(train_labels, num_classes=2)
+
+# Split data into train, validation, and test sets
+X_train, X_test1, y_train, y_test1 = train_test_split(train_data, train_labels, test_size=0.3, random_state=42, shuffle=True, stratify=train_labels)
+X_val, X_test, y_val, y_test = train_test_split(X_test1, y_test1, test_size=0.5, random_state=42, shuffle=True, stratify=y_test1)
+
+# Display shapes of train, validation, and test sets
+print('X_train shape is ', X_train.shape)
+print('X_test shape is ', X_test.shape)
+print('X_val shape is ', X_val.shape)
+print('y_train shape is ', y_train.shape)
+print('y_test shape is ', y_test.shape)
+print('y_val shape is ', y_val.shape)
+
+# Load InceptionV3 base model
+base_model = tf.keras.applications.InceptionV3(input_shape=(176, 176, 3), include_top=False, weights='imagenet')
+base_model.trainable = False
+
+# Build the model architecture
+model_Inception = tf.keras.models.Sequential()
+model_Inception.add(base_model)
+model_Inception.add(tf.keras.layers.Dropout(0.5))
+model_Inception.add(tf.keras.layers.GlobalAveragePooling2D())
+model_Inception.add(tf.keras.layers.Flatten())
+model_Inception.add(tf.keras.layers.BatchNormalization())
+model_Inception.add(tf.keras.layers.Dense(512, activation=tf.nn.relu))
+model_Inception.add(tf.keras.layers.BatchNormalization())
+model_Inception.add(tf.keras.layers.Dropout(0.5))
+model_Inception.add(tf.keras.layers.Dense(256, activation=tf.nn.relu))
+model_Inception.add(tf.keras.layers.BatchNormalization())
+model_Inception.add(tf.keras.layers.Dropout(0.5))
+model_Inception.add(tf.keras.layers.Dense(128, activation=tf.nn.relu))
+model_Inception.add(tf.keras.layers.BatchNormalization())
+model_Inception.add(tf.keras.layers.Dropout(0.5))
+model_Inception.add(tf.keras.layers.Dense(64, activation=tf.nn.relu))
+model_Inception.add(tf.keras.layers.BatchNormalization())
+model_Inception.add(tf.keras.layers.Dropout(0.5))
+model_Inception.add(tf.keras.layers.BatchNormalization())
+model_Inception.add(tf.keras.layers.Dense(2, activation=tf.nn.softmax))
+
+# Display model summary
+model_Inception.summary()
+
+# Define callbacks
+checkpoint_cb = ModelCheckpoint("inception.h5", save_best_only=True)
+early_stopping_cb = EarlyStopping(patience=10, restore_best_weights=True)
+
+# Compile the model
+model_Inception.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+# Train the model
+hist = model_Inception.fit(X_train, y_train, epochs=50, validation_data=(X_val, y_val), callbacks=[checkpoint_cb, early_stopping_cb])
+
+# Evaluate the model on the test set
+score, acc = model_Inception.evaluate(X_test, y_test)
+print('Test Loss =', score)
+print('Test Accuracy =', acc)
+
+
+
+#multi model neural network
+
+import pandas as pd
+import numpy as np
+import cv2
+import os
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.utils import shuffle
+from imblearn.over_sampling import SMOTE
+from keras.models import Sequential, Model, load_model
+from keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPooling2D, GlobalAveragePooling2D, BatchNormalization, Input, concatenate
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+from keras.optimizers import Adam
+from keras.utils import to_categorical
+import tensorflow as tf
+from sklearn.metrics import classification_report
+
+# Load CSV data
+data = pd.read_csv("/content/drive/MyDrive/data.csv")
+
+# Apply label encoding to the "class" column
+label_encoder = LabelEncoder()
+data["class"] = label_encoder.fit_transform(data["class"])
+
+# Split CSV data into features and target
+X_csv = data.drop(columns=["ID", "class"])
+y_csv = data["class"]
+
+# Perform additional preprocessing such as scaling
+scaler = StandardScaler()
+X_csv_scaled = scaler.fit_transform(X_csv)
+
+# Split CSV data into train and test sets
+X_csv_train, X_csv_test, y_csv_train, y_csv_test = train_test_split(X_csv_scaled, y_csv, test_size=0.2, random_state=42)
+
+# Load MRI image data and preprocess
+images = []
+labels = []
+mri_data_dir = '/content/drive/MyDrive/mri data'
+for folder in os.listdir(mri_data_dir):
+    folder_path = os.path.join(mri_data_dir, folder)
+    if os.path.isdir(folder_path):
+        for image_filename in os.listdir(folder_path):
+            image_path = os.path.join(folder_path, image_filename)
+            images.append(image_path)
+            labels.append(folder)
+
+df = pd.DataFrame({'image': images, 'label': labels})
+Size = (176, 176)
+work_dr = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1./255)
+train_data_gen = work_dr.flow_from_dataframe(df, x_col='image', y_col='label', target_size=Size, batch_size=6500, shuffle=False)
+train_data, train_labels = train_data_gen.next()
+sm = SMOTE(random_state=42)
+train_data, train_labels = sm.fit_resample(train_data.reshape(-1, 176 * 176 * 3), train_labels)
+train_data = train_data.reshape(-1, 176, 176, 3)
+train_labels = to_categorical(train_labels, num_classes=2)
+X_mri_train, X_mri_test, y_mri_train, y_mri_test = train_test_split(train_data, train_labels, test_size=0.2, random_state=42, stratify=train_labels)
+
+# Load pre-trained CSV model
+csv_model = load_model('/content/alzheimer_model.h5')
+
+# Load pre-trained MRI model
+mri_model = load_model('/content/inception.h5')
+
+# Define the combined model architecture
+input_csv = Input(shape=(X_csv_train.shape[1],))
+input_mri = Input(shape=(176, 176, 3))
+
+# CSV model architecture
+csv_model_layers = csv_model(input_csv)
+
+# MRI model architecture
+mri_model_layers = mri_model(input_mri)
+
+# Combine both models
+combined_model_layers = concatenate([csv_model_layers, mri_model_layers])
+
+# Additional dense layers
+combined_model_layers = Dense(64, activation='relu')(combined_model_layers)
+combined_model_layers = Dense(32, activation='relu')(combined_model_layers)
+
+# Output layer
+output = Dense(2, activation='softmax')(combined_model_layers)
+
+# Create the combined model
+combined_model = Model(inputs=[input_csv, input_mri], outputs=output)
+
+# Compile the combined model
+combined_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+# Train the combined model
+combined_model.fit([X_csv_train, X_mri_train], y_mri_train, epochs=20, batch_size=32, validation_split=0.2)
+
+# Ensure that both test sets have the same number of samples
+num_samples = min(len(X_csv_test), len(X_mri_test))
+X_csv_test = X_csv_test[:num_samples]
+y_csv_test = y_csv_test[:num_samples]
+X_mri_test = X_mri_test[:num_samples]
+y_mri_test = y_mri_test[:num_samples]
+
+# Evaluate the combined model
+test_loss, test_accuracy = combined_model.evaluate([X_csv_test, X_mri_test], y_mri_test)
+print("Test Loss:", test_loss)
+print("Test Accuracy:", test_accuracy)
+
+# Generate predictions
+predictions = combined_model.predict([X_csv_test, X_mri_test])
+
+# Convert predictions to class labels
+predicted_classes = np.argmax(predictions, axis=1)
+
+# Generate classification report
+print(classification_report(y_mri_test.argmax(axis=1), predicted_classes))
